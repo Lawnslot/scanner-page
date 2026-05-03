@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>📷 バーコードスキャナ</title>
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Kaku Gothic ProN', 'Meiryo', sans-serif;
+      background: linear-gradient(135deg, #5d4037 0%, #3e2723 100%);
+      color: #2c1810;
+      min-height: 100vh;
+      padding: 16px;
+    }
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 24px 20px;
+      max-width: 480px;
+      margin: 0 auto;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+      text-align: center;
+    }
+    h1 {
+      color: #5d4037;
+      font-size: 20px;
+      margin-bottom: 8px;
+    }
+    .instruction {
+      color: #6d4c41;
+      font-size: 14px;
+      margin-bottom: 16px;
+      line-height: 1.6;
+    }
+    .instruction strong { color: #d84315; }
+    #reader {
+      max-width: 100%;
+      margin: 0 auto;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #000;
+      min-height: 240px;
+    }
+    #reader video { width: 100% !important; height: auto !important; display: block; }
+    #reader__dashboard_section,
+    #reader__dashboard_section_csr,
+    #reader__dashboard_section_swaplink { display: none !important; }
+    .status {
+      margin-top: 16px;
+      padding: 14px 16px;
+      border-radius: 12px;
+      background: #efebe9;
+      color: #5d4037;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .status.success {
+      background: #e8f5e9;
+      color: #2e7d32;
+      border: 2px solid #a5d6a7;
+    }
+    .status.error {
+      background: #ffebee;
+      color: #c62828;
+      border: 2px solid #ef9a9a;
+    }
+    .close-btn {
+      background: #efebe9;
+      color: #5d4037;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 24px;
+      font-size: 14px;
+      cursor: pointer;
+      margin-top: 12px;
+      font-weight: 500;
+    }
+    .close-btn:hover { background: #d7ccc8; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>📷 本のバーコードを読み取り</h1>
+    <p class="instruction">
+      本の<strong>うらがわ</strong>にあるバーコードを<br>
+      カメラに見せてください 📚
+    </p>
+    <div id="reader"></div>
+    <div id="status" class="status">カメラを準備しています...</div>
+    <button class="close-btn" onclick="cancelScan()">キャンセル</button>
+  </div>
+
+  <script>
+    let qrScanner = null;
+    let scanned = false;
+
+    function sendToOpener(payload) {
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage(payload, '*');
+        }
+      } catch (e) {}
+    }
+
+    function cancelScan() {
+      sendToOpener({ type: 'scanner-cancel' });
+      stopAndClose();
+    }
+
+    async function stopAndClose() {
+      try {
+        if (qrScanner && qrScanner.getState && qrScanner.getState() === 2) {
+          await qrScanner.stop();
+        }
+      } catch (e) {}
+      try { window.close(); } catch (e) {}
+    }
+
+    async function startScanner() {
+      const status = document.getElementById('status');
+
+      if (typeof Html5Qrcode === 'undefined') {
+        status.className = 'status error';
+        status.innerHTML = '❌ ライブラリ読み込み失敗<br><small>ネットワーク接続を確認してください</small>';
+        return;
+      }
+
+      qrScanner = new Html5Qrcode('reader', { verbose: false });
+
+      const config = {
+        fps: 10,
+        qrbox: function(w, h) {
+          const minEdge = Math.min(w, h);
+          const size = Math.floor(minEdge * 0.85);
+          return { width: size, height: Math.floor(size * 0.55) };
+        },
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E
+        ]
+      };
+
+      try {
+        await qrScanner.start(
+          { facingMode: 'environment' },
+          config,
+          onScanSuccess,
+          () => {}
+        );
+        status.className = 'status success';
+        status.innerHTML = '✅ カメラ起動！<br>バーコードを枠内に映してね';
+      } catch (err) {
+        const msg = (err && err.message) ? err.message : String(err || '');
+        status.className = 'status error';
+        status.innerHTML = '❌ カメラを開けませんでした<br><small>' + msg + '</small><br><br>ブラウザでカメラ許可を確認してください';
+      }
+    }
+
+    function onScanSuccess(decodedText) {
+      if (scanned) return;
+
+      const isbn = (decodedText || '').replace(/[^0-9]/g, '');
+      if (!/^[0-9]{10,13}$/.test(isbn)) return;
+
+      scanned = true;
+
+      const status = document.getElementById('status');
+      status.className = 'status success';
+      status.innerHTML = '✅ 読み取り成功！<br>ISBN: ' + isbn;
+
+      sendToOpener({ type: 'scanner-result', isbn: isbn });
+
+      setTimeout(stopAndClose, 800);
+    }
+
+    window.addEventListener('beforeunload', () => {
+      if (!scanned) sendToOpener({ type: 'scanner-cancel' });
+    });
+
+    window.addEventListener('DOMContentLoaded', startScanner);
+  </script>
+</body>
+</html>
